@@ -1,21 +1,33 @@
--- Enable Row Level Security on all tables
-ALTER TABLE organizations ENABLE ROW LEVEL SECURITY;
-ALTER TABLE users ENABLE ROW LEVEL SECURITY;
-ALTER TABLE contacts ENABLE ROW LEVEL SECURITY;
-ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
-ALTER TABLE document_files ENABLE ROW LEVEL SECURITY;
-ALTER TABLE recipients ENABLE ROW LEVEL SECURITY;
-ALTER TABLE signing_sessions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE fields ENABLE ROW LEVEL SECURITY;
-ALTER TABLE templates ENABLE ROW LEVEL SECURITY;
-ALTER TABLE template_fields ENABLE ROW LEVEL SECURITY;
-ALTER TABLE audit_events ENABLE ROW LEVEL SECURITY;
+-- Fix RLS infinite recursion issue
+-- This script fixes the infinite recursion error in RLS policies
+-- by using a SECURITY DEFINER helper function
 
--- Organizations: Allow authenticated users to create orgs, then view/update their own
-DROP POLICY IF EXISTS "Authenticated users can create organizations" ON organizations;
-CREATE POLICY "Authenticated users can create organizations" ON organizations
-  FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
+-- Create a helper function to get user's organization_id without triggering RLS recursion
+CREATE OR REPLACE FUNCTION get_user_organization_id()
+RETURNS uuid
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT organization_id FROM users WHERE id = auth.uid() LIMIT 1;
+$$;
 
+-- Drop and recreate users policies to avoid recursion
+DROP POLICY IF EXISTS "Users can view org members" ON users;
+DROP POLICY IF EXISTS "Users can view themselves" ON users;
+
+-- Policy 1: Users can always view themselves (no recursion)
+CREATE POLICY "Users can view themselves" ON users
+  FOR SELECT USING (id = auth.uid());
+
+-- Policy 2: Users can view org members (uses helper function to avoid recursion)
+CREATE POLICY "Users can view org members" ON users
+  FOR SELECT USING (
+    organization_id = get_user_organization_id()
+  );
+
+-- Update organizations policies
 DROP POLICY IF EXISTS "Users can view own organization" ON organizations;
 CREATE POLICY "Users can view own organization" ON organizations
   FOR SELECT USING (
@@ -28,39 +40,7 @@ CREATE POLICY "Users can update own organization" ON organizations
     id = get_user_organization_id()
   );
 
--- Users: Can view/update themselves and org members
--- Create a helper function to get user's organization_id without triggering RLS recursion
-CREATE OR REPLACE FUNCTION get_user_organization_id()
-RETURNS uuid
-LANGUAGE sql
-STABLE
-SECURITY DEFINER
-SET search_path = public
-AS $$
-  SELECT organization_id FROM users WHERE id = auth.uid() LIMIT 1;
-$$;
-
--- Policy 1: Users can always view themselves (no recursion)
-DROP POLICY IF EXISTS "Users can view themselves" ON users;
-CREATE POLICY "Users can view themselves" ON users
-  FOR SELECT USING (id = auth.uid());
-
--- Policy 2: Users can view org members (uses helper function to avoid recursion)
-DROP POLICY IF EXISTS "Users can view org members" ON users;
-CREATE POLICY "Users can view org members" ON users
-  FOR SELECT USING (
-    organization_id = get_user_organization_id()
-  );
-
-DROP POLICY IF EXISTS "Users can update themselves" ON users;
-CREATE POLICY "Users can update themselves" ON users
-  FOR UPDATE USING (id = auth.uid());
-
-DROP POLICY IF EXISTS "Users can insert themselves" ON users;
-CREATE POLICY "Users can insert themselves" ON users
-  FOR INSERT WITH CHECK (id = auth.uid());
-
--- Contacts: Organization-scoped
+-- Update contacts policies
 DROP POLICY IF EXISTS "Users can view org contacts" ON contacts;
 CREATE POLICY "Users can view org contacts" ON contacts
   FOR SELECT USING (
@@ -73,7 +53,7 @@ CREATE POLICY "Users can manage org contacts" ON contacts
     organization_id = get_user_organization_id()
   );
 
--- Documents: Organization-scoped
+-- Update documents policies
 DROP POLICY IF EXISTS "Users can view org documents" ON documents;
 CREATE POLICY "Users can view org documents" ON documents
   FOR SELECT USING (
@@ -86,7 +66,7 @@ CREATE POLICY "Users can manage org documents" ON documents
     organization_id = get_user_organization_id()
   );
 
--- Document Files: Through document access
+-- Update document_files policies
 DROP POLICY IF EXISTS "Users can view document files" ON document_files;
 CREATE POLICY "Users can view document files" ON document_files
   FOR SELECT USING (
@@ -103,7 +83,7 @@ CREATE POLICY "Users can manage document files" ON document_files
     )
   );
 
--- Recipients: Through document access
+-- Update recipients policies
 DROP POLICY IF EXISTS "Users can view document recipients" ON recipients;
 CREATE POLICY "Users can view document recipients" ON recipients
   FOR SELECT USING (
@@ -120,7 +100,7 @@ CREATE POLICY "Users can manage document recipients" ON recipients
     )
   );
 
--- Signing Sessions: Through document access for internal users
+-- Update signing_sessions policies
 DROP POLICY IF EXISTS "Users can view signing sessions" ON signing_sessions;
 CREATE POLICY "Users can view signing sessions" ON signing_sessions
   FOR SELECT USING (
@@ -137,7 +117,7 @@ CREATE POLICY "Users can manage signing sessions" ON signing_sessions
     )
   );
 
--- Fields: Through document access
+-- Update fields policies
 DROP POLICY IF EXISTS "Users can view document fields" ON fields;
 CREATE POLICY "Users can view document fields" ON fields
   FOR SELECT USING (
@@ -154,7 +134,7 @@ CREATE POLICY "Users can manage document fields" ON fields
     )
   );
 
--- Templates: Organization-scoped
+-- Update templates policies
 DROP POLICY IF EXISTS "Users can view org templates" ON templates;
 CREATE POLICY "Users can view org templates" ON templates
   FOR SELECT USING (
@@ -167,7 +147,7 @@ CREATE POLICY "Users can manage org templates" ON templates
     organization_id = get_user_organization_id()
   );
 
--- Template Fields: Through template access
+-- Update template_fields policies
 DROP POLICY IF EXISTS "Users can view template fields" ON template_fields;
 CREATE POLICY "Users can view template fields" ON template_fields
   FOR SELECT USING (
@@ -184,7 +164,7 @@ CREATE POLICY "Users can manage template fields" ON template_fields
     )
   );
 
--- Audit Events: Organization-scoped
+-- Update audit_events policies
 DROP POLICY IF EXISTS "Users can view org audit events" ON audit_events;
 CREATE POLICY "Users can view org audit events" ON audit_events
   FOR SELECT USING (
