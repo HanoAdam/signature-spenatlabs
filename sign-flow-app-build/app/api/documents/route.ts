@@ -35,10 +35,10 @@ export async function POST(request: Request) {
         organization_id: organizationId,
         created_by: user.id,
         title,
-        description,
+        description: description || null,
         status: sendNow ? "pending" : "draft",
-        signing_order: signingOrder,
-        template_id: templateId,
+        signing_order: signingOrder || "parallel",
+        template_id: templateId || null,
       })
       .select()
       .single()
@@ -46,13 +46,15 @@ export async function POST(request: Request) {
     if (docError) throw docError
 
     // Create document file
-    await supabase.from("document_files").insert({
+    const { error: fileError } = await supabase.from("document_files").insert({
       document_id: document.id,
       file_type: "original",
       url: pdfUrl,
       filename: pdfFilename,
       page_count: pageCount,
     })
+
+    if (fileError) throw fileError
 
     // Create recipients
     const recipientInserts = recipients.map(
@@ -75,7 +77,7 @@ export async function POST(request: Request) {
     if (recipError) throw recipError
 
     // Create fields with actual recipient IDs
-    if (fields.length > 0 && createdRecipients) {
+    if (fields && Array.isArray(fields) && fields.length > 0 && createdRecipients && createdRecipients.length > 0) {
       const fieldInserts = fields.map(
         (f: {
           type: string
@@ -89,9 +91,12 @@ export async function POST(request: Request) {
         }) => {
           // Map temp recipient ID to actual ID
           let recipientId = f.recipient_id
-          if (recipientId.startsWith("temp-")) {
+          if (recipientId && typeof recipientId === "string" && recipientId.startsWith("temp-")) {
             const tempIndex = Number.parseInt(recipientId.replace("temp-", ""))
             recipientId = createdRecipients[tempIndex]?.id || createdRecipients[0]?.id
+          }
+          if (!recipientId) {
+            throw new Error(`Invalid recipient_id for field: ${JSON.stringify(f)}`)
           }
           return {
             document_id: document.id,
@@ -102,12 +107,13 @@ export async function POST(request: Request) {
             y: f.y,
             width: f.width,
             height: f.height,
-            required: f.required,
+            required: f.required ?? true,
           }
         },
       )
 
-      await supabase.from("fields").insert(fieldInserts)
+      const { error: fieldError } = await supabase.from("fields").insert(fieldInserts)
+      if (fieldError) throw fieldError
     }
 
     // If sending now, create signing sessions and send emails
@@ -115,17 +121,18 @@ export async function POST(request: Request) {
       for (const recipient of createdRecipients) {
         if (recipient.role !== "cc") {
           const token = generateSigningToken()
-          await supabase.from("signing_sessions").insert({
+          const { error: sessionError } = await supabase.from("signing_sessions").insert({
             recipient_id: recipient.id,
             document_id: document.id,
             token,
             expires_at: getTokenExpiryDate(7).toISOString(),
           })
+          if (sessionError) throw sessionError
         }
       }
 
       // Log audit event
-      await supabase.from("audit_events").insert({
+      const { error: auditError } = await supabase.from("audit_events").insert({
         organization_id: organizationId,
         document_id: document.id,
         event_type: "document.sent",
@@ -133,20 +140,31 @@ export async function POST(request: Request) {
         actor_email: user.email,
         metadata: { recipient_count: createdRecipients.length },
       })
+      if (auditError) throw auditError
     } else {
       // Log draft created
-      await supabase.from("audit_events").insert({
+      const { error: auditError } = await supabase.from("audit_events").insert({
         organization_id: organizationId,
         document_id: document.id,
         event_type: "document.created",
         actor_user_id: user.id,
         actor_email: user.email,
       })
+      if (auditError) throw auditError
     }
 
     return NextResponse.json({ documentId: document.id })
   } catch (error) {
     console.error("Create document error:", error)
-    return NextResponse.json({ error: "Failed to create document" }, { status: 500 })
+    const errorMessage = error instanceof Error ? error.message : "Failed to create document"
+    const errorDetails = error instanceof Error && "details" in error ? error.details : undefined
+    return NextResponse.json(
+      {
+        error: "Failed to create document",
+        message: errorMessage,
+        details: errorDetails,
+      },
+      { status: 500 },
+    )
   }
 }

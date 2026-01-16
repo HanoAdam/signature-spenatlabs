@@ -111,15 +111,20 @@ export function DocumentWizard({ templates, contacts, organizationId, userId }: 
       })
 
       if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.message || "Failed to create document")
+        const errorData = await response.json()
+        const errorMessage = errorData.message || errorData.error || "Failed to create document"
+        const errorDetails = errorData.details ? `\nDetails: ${JSON.stringify(errorData.details)}` : ""
+        console.error("Document creation error:", errorData)
+        throw new Error(`${errorMessage}${errorDetails}`)
       }
 
       const { documentId } = await response.json()
       toast.success(sendNow ? "Document sent for signing" : "Document saved as draft")
       router.push(`/documents/${documentId}`)
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to create document")
+      const errorMessage = error instanceof Error ? error.message : "Failed to create document"
+      console.error("Document creation error:", error)
+      toast.error(errorMessage)
     } finally {
       setIsSubmitting(false)
     }
