@@ -13,7 +13,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const body = await request.json()
+    let body
+    try {
+      body = await request.json()
+    } catch (parseError) {
+      console.error("JSON parse error:", parseError)
+      return NextResponse.json(
+        { error: "Invalid JSON in request body", message: parseError instanceof Error ? parseError.message : "Parse error" },
+        { status: 400 },
+      )
+    }
+
     const {
       title,
       description,
@@ -28,7 +38,25 @@ export async function POST(request: Request) {
       sendNow,
     } = body
 
+    // Validate required fields
+    if (!title || !pdfUrl || !pdfFilename || !organizationId) {
+      console.error("Missing required fields:", { title: !!title, pdfUrl: !!pdfUrl, pdfFilename: !!pdfFilename, organizationId: !!organizationId })
+      return NextResponse.json(
+        { error: "Missing required fields", message: "title, pdfUrl, pdfFilename, and organizationId are required" },
+        { status: 400 },
+      )
+    }
+
+    if (!recipients || !Array.isArray(recipients) || recipients.length === 0) {
+      console.error("Invalid recipients:", recipients)
+      return NextResponse.json(
+        { error: "Invalid recipients", message: "At least one recipient is required" },
+        { status: 400 },
+      )
+    }
+
     // Create document
+    console.log("Creating document with:", { organizationId, userId: user.id, title, status: sendNow ? "pending" : "draft" })
     const { data: document, error: docError } = await supabase
       .from("documents")
       .insert({
@@ -43,9 +71,14 @@ export async function POST(request: Request) {
       .select()
       .single()
 
-    if (docError) throw docError
+    if (docError) {
+      console.error("Document creation error:", docError)
+      throw docError
+    }
+    console.log("Document created successfully:", document?.id)
 
     // Create document file
+    console.log("Creating document file for document:", document.id)
     const { error: fileError } = await supabase.from("document_files").insert({
       document_id: document.id,
       file_type: "original",
@@ -54,7 +87,11 @@ export async function POST(request: Request) {
       page_count: pageCount,
     })
 
-    if (fileError) throw fileError
+    if (fileError) {
+      console.error("Document file creation error:", fileError)
+      throw fileError
+    }
+    console.log("Document file created successfully")
 
     // Create recipients
     const recipientInserts = recipients.map(
@@ -69,12 +106,17 @@ export async function POST(request: Request) {
       }),
     )
 
+    console.log("Creating recipients:", recipientInserts.length)
     const { data: createdRecipients, error: recipError } = await supabase
       .from("recipients")
       .insert(recipientInserts)
       .select()
 
-    if (recipError) throw recipError
+    if (recipError) {
+      console.error("Recipients creation error:", recipError)
+      throw recipError
+    }
+    console.log("Recipients created successfully:", createdRecipients?.length)
 
     // Create fields with actual recipient IDs
     if (fields && Array.isArray(fields) && fields.length > 0 && createdRecipients && createdRecipients.length > 0) {
@@ -156,13 +198,44 @@ export async function POST(request: Request) {
     return NextResponse.json({ documentId: document.id })
   } catch (error) {
     console.error("Create document error:", error)
-    const errorMessage = error instanceof Error ? error.message : "Failed to create document"
-    const errorDetails = error instanceof Error && "details" in error ? error.details : undefined
+    console.error("Error type:", typeof error)
+    console.error("Error keys:", error && typeof error === "object" ? Object.keys(error) : "N/A")
+    
+    // Handle Supabase errors (they're objects, not Error instances)
+    let errorMessage = "Failed to create document"
+    let errorCode: string | undefined
+    let errorDetails: any
+    let errorHint: string | undefined
+    
+    if (error && typeof error === "object") {
+      // Supabase error structure
+      if ("message" in error && typeof error.message === "string") {
+        errorMessage = error.message
+      }
+      if ("code" in error) {
+        errorCode = String(error.code)
+      }
+      if ("details" in error) {
+        errorDetails = error.details
+      }
+      if ("hint" in error && typeof error.hint === "string") {
+        errorHint = error.hint
+      }
+    } else if (error instanceof Error) {
+      errorMessage = error.message
+    }
+    
+    // Log full error for debugging
+    console.error("Full error object:", JSON.stringify(error, null, 2))
+    
     return NextResponse.json(
       {
         error: "Failed to create document",
         message: errorMessage,
+        code: errorCode,
         details: errorDetails,
+        hint: errorHint,
+        rawError: process.env.NODE_ENV === "development" ? error : undefined,
       },
       { status: 500 },
     )
