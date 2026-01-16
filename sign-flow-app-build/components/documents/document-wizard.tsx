@@ -112,10 +112,36 @@ export function DocumentWizard({ templates, contacts, organizationId, userId }: 
 
       if (!response.ok) {
         const errorData = await response.json()
-        const errorMessage = errorData.message || errorData.error || "Failed to create document"
-        const errorDetails = errorData.details ? `\nDetails: ${JSON.stringify(errorData.details)}` : ""
-        console.error("Document creation error:", errorData)
-        throw new Error(`${errorMessage}${errorDetails}`)
+        console.error("Document creation error response:", errorData)
+        
+        // Build detailed error message
+        let errorMessage = errorData.message || errorData.error || "Failed to create document"
+        
+        // Add code if available
+        if (errorData.code) {
+          errorMessage += ` (Code: ${errorData.code})`
+        }
+        
+        // Add hint if available
+        if (errorData.hint) {
+          errorMessage += `\nHint: ${errorData.hint}`
+        }
+        
+        // Add details if available
+        if (errorData.details) {
+          errorMessage += `\nDetails: ${JSON.stringify(errorData.details, null, 2)}`
+        }
+        
+        // Log full error for debugging
+        console.error("Full error details:", {
+          message: errorData.message,
+          code: errorData.code,
+          details: errorData.details,
+          hint: errorData.hint,
+          rawError: errorData.rawError,
+        })
+        
+        throw new Error(errorMessage)
       }
 
       const { documentId } = await response.json()
