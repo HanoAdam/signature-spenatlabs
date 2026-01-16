@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr"
 import { cookies } from "next/headers"
 import { NextResponse } from "next/server"
+import { createClient as createServiceClient } from "@supabase/supabase-js"
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url)
@@ -46,14 +47,29 @@ export async function GET(request: Request) {
       console.log("[v0] Auth callback - existing user:", !!existingUser)
 
       if (!existingUser) {
+        // Try to use service client for profile creation (bypasses RLS)
+        // Fall back to regular client if service key not available
+        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL
+        const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+        const profileClient = supabaseServiceKey && supabaseUrl
+          ? createServiceClient(supabaseUrl, supabaseServiceKey, {
+              auth: { autoRefreshToken: false, persistSession: false },
+            })
+          : supabase
+
+        console.log("[v0] Auth callback - Using service client:", !!supabaseServiceKey)
+
         // Create organization for new user
-        const orgName = data.user.user_metadata?.organization_name || "My Organization"
+        // Note: sign-up page uses 'org_name' in metadata
+        const orgName = data.user.user_metadata?.org_name || data.user.user_metadata?.organization_name || `${data.user.email?.split("@")[0] || "User"}'s Organization`
         const slug = orgName
           .toLowerCase()
           .replace(/[^a-z0-9]+/g, "-")
           .replace(/(^-|-$)/g, "")
 
-        const { data: org, error: orgError } = await supabase
+        console.log("[v0] Auth callback - Creating org:", orgName, "for user:", data.user.id)
+
+        const { data: org, error: orgError } = await profileClient
           .from("organizations")
           .insert({
             name: orgName,
@@ -62,11 +78,16 @@ export async function GET(request: Request) {
           .select()
           .single()
 
-        console.log("[v0] Auth callback - created org:", !!org, orgError?.message)
+        console.log("[v0] Auth callback - Org creation result:", !!org, orgError?.message, orgError?.code)
+
+        if (orgError) {
+          console.error("[v0] Auth callback - Failed to create org:", orgError)
+          // Continue anyway - dashboard layout will try again with service client
+        }
 
         if (org) {
           // Create user profile
-          const { error: userError } = await supabase.from("users").insert({
+          const { error: userError } = await profileClient.from("users").insert({
             id: data.user.id,
             organization_id: org.id,
             email: data.user.email!,
@@ -74,7 +95,12 @@ export async function GET(request: Request) {
             role: "admin",
           })
 
-          console.log("[v0] Auth callback - created user:", !userError, userError?.message)
+          console.log("[v0] Auth callback - User creation result:", !userError, userError?.message, userError?.code)
+
+          if (userError) {
+            console.error("[v0] Auth callback - Failed to create user:", userError)
+            // If user creation fails but org was created, dashboard layout will handle it
+          }
         }
       }
 

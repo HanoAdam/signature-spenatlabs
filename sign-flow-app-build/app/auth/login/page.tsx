@@ -72,12 +72,19 @@ export default function LoginPage() {
                     <Input id="password" name="password" type="password" autoComplete="current-password" required />
                   </div>
                   {(error || urlError) && (
-                    <p className="text-sm text-destructive">
-                      {error ||
-                        (urlError === "profile_setup_failed"
-                          ? "Failed to set up your profile. Please try again."
-                          : urlError)}
-                    </p>
+                    <div className="space-y-2">
+                      <p className="text-sm text-destructive">
+                        {error ||
+                          (urlError === "profile_setup_failed"
+                            ? "Failed to set up your profile. Please check the server logs and ensure SUPABASE_SERVICE_ROLE_KEY is set correctly."
+                            : urlError)}
+                      </p>
+                      {urlError === "profile_setup_failed" && (
+                        <p className="text-xs text-muted-foreground">
+                          If this persists, visit <code className="text-xs bg-muted px-1 py-0.5 rounded">/api/debug/user-status</code> while logged in to see detailed diagnostics.
+                        </p>
+                      )}
+                    </div>
                   )}
                   <Button type="submit" className="w-full" disabled={isLoading}>
                     {isLoading ? "Signing in..." : "Sign in"}
