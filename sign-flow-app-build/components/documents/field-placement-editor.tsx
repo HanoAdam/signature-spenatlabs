@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState, useRef } from "react"
+import { useState, useRef, useEffect, useCallback } from "react"
 import { Document, Page, pdfjs } from "react-pdf"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -20,6 +20,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Trash2,
+  Undo2,
+  Redo2,
 } from "lucide-react"
 import type { Recipient, Field, FieldType } from "@/lib/types"
 
@@ -43,9 +45,25 @@ const fieldTypes: { type: FieldType; label: string; icon: React.ElementType }[] 
   { type: "checkbox", label: "Checkbox", icon: CheckSquare },
 ]
 
-const recipientColors = ["bg-blue-500", "bg-amber-500", "bg-emerald-500", "bg-rose-500", "bg-purple-500", "bg-cyan-500"]
+const recipientColors = [
+  "bg-blue-500",
+  "bg-amber-500",
+  "bg-emerald-500",
+  "bg-rose-500",
+  "bg-purple-500",
+  "bg-cyan-500",
+]
 
-export function FieldPlacementEditor({ pdfUrl, pageCount, recipients, fields, setFields }: FieldPlacementEditorProps) {
+const recipientBorderColors = [
+  "border-blue-500",
+  "border-amber-500",
+  "border-emerald-500",
+  "border-rose-500",
+  "border-purple-500",
+  "border-cyan-500",
+]
+
+export function FieldPlacementEditor({ pdfUrl, pageCount: initialPageCount, recipients, fields, setFields }: FieldPlacementEditorProps) {
   const [currentPage, setCurrentPage] = useState(1)
   const [selectedRecipient, setSelectedRecipient] = useState<number>(0)
   const [selectedFieldType, setSelectedFieldType] = useState<FieldType>("signature")
@@ -53,6 +71,80 @@ export function FieldPlacementEditor({ pdfUrl, pageCount, recipients, fields, se
   const containerRef = useRef<HTMLDivElement>(null)
   const [scale, setScale] = useState(1)
   const [pdfDimensions, setPdfDimensions] = useState({ width: 0, height: 0 })
+  const [actualPageCount, setActualPageCount] = useState(initialPageCount)
+  
+  // Undo/Redo history
+  const [history, setHistory] = useState<Partial<Field[]>[]>([[]])
+  const [historyIndex, setHistoryIndex] = useState(0)
+  const isUndoRedoRef = useRef(false)
+
+  // Initialize history with current fields on mount
+  useEffect(() => {
+    if (history.length === 1 && history[0].length === 0 && fields.length === 0) {
+      // Initial state - history is already empty, which matches fields
+      return
+    }
+  }, [])
+
+  // Update history when fields change (but not from undo/redo)
+  useEffect(() => {
+    if (isUndoRedoRef.current) {
+      isUndoRedoRef.current = false
+      return
+    }
+
+    // Check if fields actually changed from current history state
+    const currentHistoryState = history[historyIndex] || []
+    const fieldsStr = JSON.stringify(fields)
+    const historyStr = JSON.stringify(currentHistoryState)
+    
+    // Only add to history if fields actually changed
+    if (fieldsStr !== historyStr) {
+      const newHistory = history.slice(0, historyIndex + 1)
+      newHistory.push([...fields])
+      setHistory(newHistory)
+      setHistoryIndex(newHistory.length - 1)
+    }
+  }, [fields])
+
+  const addToHistory = (newFields: Partial<Field>[]) => {
+    // Directly update fields - the useEffect will handle adding to history
+    setFields(newFields)
+  }
+
+  const undo = useCallback(() => {
+    if (historyIndex > 0) {
+      isUndoRedoRef.current = true
+      const newIndex = historyIndex - 1
+      setHistoryIndex(newIndex)
+      setFields([...history[newIndex]])
+    }
+  }, [historyIndex, history])
+
+  const redo = useCallback(() => {
+    if (historyIndex < history.length - 1) {
+      isUndoRedoRef.current = true
+      const newIndex = historyIndex + 1
+      setHistoryIndex(newIndex)
+      setFields([...history[newIndex]])
+    }
+  }, [historyIndex, history])
+
+  // Keyboard shortcuts for undo/redo
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
+        e.preventDefault()
+        undo()
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === "y" || (e.key === "z" && e.shiftKey))) {
+        e.preventDefault()
+        redo()
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown)
+    return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [undo, redo])
 
   const handlePageClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!containerRef.current || recipients.length === 0) return
@@ -84,19 +176,46 @@ export function FieldPlacementEditor({ pdfUrl, pageCount, recipients, fields, se
       recipient_id: recipients[selectedRecipient]?.id || `temp-${selectedRecipient}`,
     }
 
-    setFields([...fields, newField])
+    addToHistory([...fields, newField])
   }
 
   const removeField = (index: number) => {
-    setFields(fields.filter((_, i) => i !== index))
+    addToHistory(fields.filter((_, i) => i !== index))
   }
 
   const pageFields = fields.filter((f) => f.page === currentPage)
+  const canUndo = historyIndex > 0
+  const canRedo = historyIndex < history.length - 1
 
   return (
     <div className="flex gap-4 min-h-[600px]">
       {/* Toolbar */}
       <div className="w-64 shrink-0 space-y-4">
+        {/* Undo/Redo Controls */}
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={undo}
+            disabled={!canUndo}
+            className="flex-1"
+            title="Undo (Ctrl+Z)"
+          >
+            <Undo2 className="h-4 w-4 mr-1" />
+            Undo
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={redo}
+            disabled={!canRedo}
+            className="flex-1"
+            title="Redo (Ctrl+Y)"
+          >
+            <Redo2 className="h-4 w-4 mr-1" />
+            Redo
+          </Button>
+        </div>
         <div>
           <Label className="text-xs text-muted-foreground">Assign to Recipient</Label>
           <div className="mt-2 space-y-2">
@@ -181,12 +300,12 @@ export function FieldPlacementEditor({ pdfUrl, pageCount, recipients, fields, se
               <ChevronLeft className="h-4 w-4" />
             </Button>
             <span className="text-sm">
-              Page {currentPage} of {pageCount}
+              Page {currentPage} of {actualPageCount}
             </span>
             <Button
               variant="outline"
               size="icon"
-              disabled={currentPage >= pageCount}
+              disabled={currentPage >= actualPageCount}
               onClick={() => setCurrentPage((p) => p + 1)}
             >
               <ChevronRight className="h-4 w-4" />
@@ -209,7 +328,15 @@ export function FieldPlacementEditor({ pdfUrl, pageCount, recipients, fields, se
               onClick={handlePageClick}
               style={{ width: pdfDimensions.width * scale, height: pdfDimensions.height * scale }}
             >
-              <Document file={pdfUrl} loading={<div className="p-8 text-center">Loading PDF...</div>}>
+              <Document
+                file={pdfUrl}
+                loading={<div className="p-8 text-center">Loading PDF...</div>}
+                onLoadSuccess={({ numPages }) => {
+                  if (numPages && numPages !== actualPageCount) {
+                    setActualPageCount(numPages)
+                  }
+                }}
+              >
                 <Page
                   pageNumber={currentPage}
                   scale={scale}
@@ -224,24 +351,23 @@ export function FieldPlacementEditor({ pdfUrl, pageCount, recipients, fields, se
                 const recipientIndex = recipients.findIndex(
                   (r) => r.id === field.recipient_id || `temp-${recipients.indexOf(r)}` === field.recipient_id,
                 )
+                const colorIndex = recipientIndex >= 0 ? recipientIndex % recipientColors.length : 0
                 const FieldIcon = fieldTypes.find((f) => f.type === field.type)?.icon || PenLine
+                const borderColorClass = recipientBorderColors[colorIndex]
+                const bgColorClass = recipientColors[colorIndex]
                 return (
                   <div
                     key={i}
-                    className={`absolute border-2 rounded flex items-center justify-center cursor-move ${
-                      recipientColors[recipientIndex >= 0 ? recipientIndex % recipientColors.length : 0]
-                    } bg-opacity-20`}
+                    className={`absolute border-2 rounded flex items-center justify-center cursor-move ${borderColorClass} ${bgColorClass} bg-opacity-20`}
                     style={{
                       left: `${field.x}%`,
                       top: `${field.y}%`,
                       width: `${field.width}%`,
                       height: `${field.height}%`,
-                      borderColor: "currentColor",
-                      backgroundColor: "currentColor",
                     }}
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <FieldIcon className="h-4 w-4 text-white" />
+                    <FieldIcon className="h-4 w-4 text-white drop-shadow-sm" />
                   </div>
                 )
               })}
