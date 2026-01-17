@@ -196,16 +196,26 @@ export async function POST(request: Request) {
           try {
             // Generate unique download token for this recipient
             const downloadToken = generateDownloadToken()
-            const expiresAt = getTokenExpiryDate(90) // 90 days expiry for download links
+            // Set expiration to far future (100 years) - effectively never expires
+            const expiresAt = new Date()
+            expiresAt.setFullYear(expiresAt.getFullYear() + 100)
 
             // Create download token record
-            await supabase.from("download_tokens").insert({
+            const { error: tokenInsertError } = await supabase.from("download_tokens").insert({
               document_id: session.document_id,
               recipient_id: recipient.id || null,
               email: recipient.email,
               token: downloadToken,
               expires_at: expiresAt.toISOString(),
             })
+
+            if (tokenInsertError) {
+              console.error("Failed to create download token for", recipient.email, ":", tokenInsertError)
+              // Don't send email if token creation failed - we need the token in DB
+              continue
+            }
+
+            console.log("Download token created successfully for", recipient.email, "token:", downloadToken.substring(0, 8) + "...")
 
             // Generate unique download link
             const downloadLink = `${baseUrl}/download/${downloadToken}`

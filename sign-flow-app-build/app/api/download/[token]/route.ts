@@ -35,11 +35,6 @@ export async function GET(request: Request, { params }: { params: Promise<{ toke
       return NextResponse.json({ error: "Invalid download link" }, { status: 404 })
     }
 
-    // Check if token has expired
-    if (new Date(downloadToken.expires_at) < new Date()) {
-      return NextResponse.json({ error: "Download link has expired" }, { status: 400 })
-    }
-
     const document = downloadToken.documents as any
     const signedFile = document?.document_files?.find((f: { file_type: string }) => f.file_type === "signed")
 

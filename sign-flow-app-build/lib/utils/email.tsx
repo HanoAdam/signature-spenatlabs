@@ -221,7 +221,7 @@ export function generateCompletionEmail(params: CompletionParams): EmailTemplate
               </div>
               
               <p style="color: #71717a; font-size: 14px; line-height: 1.6; margin: 0;">
-                Click the button above to download your copy of the signed document. This link will remain valid for 90 days.
+                Click the button above to download your copy of the signed document. This link never expires.
               </p>
             </div>
             

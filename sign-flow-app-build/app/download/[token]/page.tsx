@@ -63,21 +63,33 @@ export default async function DownloadPage({ params }: PageProps) {
         </div>
       )
     }
+    // Check if it's a "no rows" error (token not found)
+    if (tokenError.code === "PGRST116" || tokenError.message?.includes("No rows")) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-muted/30 p-6">
+          <Card className="max-w-md w-full">
+            <CardHeader className="text-center">
+              <CardTitle className="text-2xl">Download Link Not Found</CardTitle>
+              <CardDescription>
+                This download link is invalid or was not properly generated. Please contact the sender for a new link.
+              </CardDescription>
+            </CardHeader>
+          </Card>
+        </div>
+      )
+    }
     notFound()
   }
 
   if (!downloadToken) {
-    notFound()
-  }
-
-  // Check if token has expired
-  if (new Date(downloadToken.expires_at) < new Date()) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-muted/30 p-6">
         <Card className="max-w-md w-full">
           <CardHeader className="text-center">
-            <CardTitle className="text-2xl">Link Expired</CardTitle>
-            <CardDescription>This download link has expired. Please contact the sender for a new link.</CardDescription>
+            <CardTitle className="text-2xl">Download Link Not Found</CardTitle>
+            <CardDescription>
+              This download link is invalid or was not properly generated. Please contact the sender for a new link.
+            </CardDescription>
           </CardHeader>
         </Card>
       </div>
@@ -130,7 +142,7 @@ export default async function DownloadPage({ params }: PageProps) {
           </Button>
 
           <p className="text-xs text-muted-foreground text-center">
-            This link will remain valid for 90 days.
+            This download link never expires.
           </p>
         </CardContent>
       </Card>
