@@ -2,45 +2,26 @@ import { Resend } from "resend"
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null
 
-interface EmailAttachment {
-  filename: string
-  content: string // Base64 encoded content
-}
-
 interface EmailTemplate {
   to: string
   subject: string
   html: string
-  attachments?: EmailAttachment[]
 }
 
 export async function sendEmail(template: EmailTemplate): Promise<{ success: boolean; error?: string }> {
   if (!resend) {
     console.log("[v0] RESEND_API_KEY not configured. Email would be sent to:", template.to)
     console.log("[v0] Subject:", template.subject)
-    if (template.attachments) {
-      console.log("[v0] Attachments:", template.attachments.map(a => a.filename).join(", "))
-    }
     return { success: true }
   }
 
   try {
-    const emailPayload: any = {
+    const { error } = await resend.emails.send({
       from: "SignFlow <noreply@signature.spenatlabs.com>",
       to: template.to,
       subject: template.subject,
       html: template.html,
-    }
-
-    // Add attachments if provided
-    if (template.attachments && template.attachments.length > 0) {
-      emailPayload.attachments = template.attachments.map(att => ({
-        filename: att.filename,
-        content: att.content,
-      }))
-    }
-
-    const { error } = await resend.emails.send(emailPayload)
+    })
 
     if (error) {
       console.error("[v0] Resend error:", error)
@@ -190,18 +171,11 @@ interface CompletionParams {
   recipientName: string
   recipientEmail: string
   documentTitle: string
-  downloadUrl?: string
-  attachment?: EmailAttachment
-  attachmentSize?: number // Size in bytes
+  downloadLink: string
 }
 
-const MAX_ATTACHMENT_SIZE = 8 * 1024 * 1024 // 8MB in bytes
-
 export function generateCompletionEmail(params: CompletionParams): EmailTemplate {
-  const { recipientName, recipientEmail, documentTitle, downloadUrl, attachment, attachmentSize } = params
-
-  // Only include attachment if it exists and is under 8MB
-  const shouldAttach = attachment && attachmentSize !== undefined && attachmentSize < MAX_ATTACHMENT_SIZE
+  const { recipientName, recipientEmail, documentTitle, downloadLink } = params
 
   return {
     to: recipientEmail,
@@ -240,40 +214,14 @@ export function generateCompletionEmail(params: CompletionParams): EmailTemplate
                 </p>
               </div>
               
-              ${
-                shouldAttach
-                  ? `
-              <p style="color: #52525b; font-size: 16px; line-height: 1.6; margin: 0 0 24px 0;">
-                The signed document is attached to this email.
-              </p>
-              `
-                  : ""
-              }
-              
-              ${
-                downloadUrl
-                  ? `
               <div style="text-align: center; margin-bottom: 32px;">
-                <a href="${downloadUrl}" style="display: inline-block; background-color: #18181b; color: white; font-size: 16px; font-weight: 600; text-decoration: none; padding: 14px 32px; border-radius: 8px;">
-                  ${shouldAttach ? "Download Additional Copy" : "Download Signed Document"}
+                <a href="${downloadLink}" style="display: inline-block; background-color: #18181b; color: white; font-size: 16px; font-weight: 600; text-decoration: none; padding: 14px 32px; border-radius: 8px;">
+                  Download Signed Document
                 </a>
               </div>
-              `
-                  : ""
-              }
-              
-              ${
-                attachmentSize && attachmentSize >= MAX_ATTACHMENT_SIZE
-                  ? `
-              <p style="color: #71717a; font-size: 14px; line-height: 1.6; margin: 0 0 16px 0;">
-                Note: The document is too large to attach. Please use the download link above.
-              </p>
-              `
-                  : ""
-              }
               
               <p style="color: #71717a; font-size: 14px; line-height: 1.6; margin: 0;">
-                A copy of the signed document has been saved to your account.
+                Click the button above to download your copy of the signed document. This link will remain valid for 90 days.
               </p>
             </div>
             
@@ -284,6 +232,5 @@ export function generateCompletionEmail(params: CompletionParams): EmailTemplate
         </body>
       </html>
     `,
-    attachments: shouldAttach && attachment ? [attachment] : undefined,
   }
 }

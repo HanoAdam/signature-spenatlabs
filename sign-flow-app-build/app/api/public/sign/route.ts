@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { headers } from "next/headers"
 import { generateCompletionEmail, sendEmail } from "@/lib/utils/email"
+import { generateDownloadToken, getTokenExpiryDate } from "@/lib/utils/tokens"
 
 export async function POST(request: Request) {
   try {
@@ -157,79 +158,12 @@ export async function POST(request: Request) {
       // Get signed document file
       const { data: documentFiles } = await supabase
         .from("document_files")
-        .select("url, filename, size_bytes")
+        .select("url, filename")
         .eq("document_id", session.document_id)
         .eq("file_type", "signed")
         .single()
 
       const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "https://signature.spenatlabs.com"
-      const downloadUrl = documentFiles?.url || undefined
-      const fileSize = documentFiles?.size_bytes || undefined
-
-      // Download PDF file for attachment (if URL exists and size is < 8MB)
-      let pdfAttachment: { filename: string; content: string } | undefined = undefined
-      let actualFileSize: number | undefined = fileSize
-      const MAX_ATTACHMENT_SIZE = 8 * 1024 * 1024 // 8MB
-
-      if (downloadUrl) {
-        try {
-          // If size is not known, download to check size
-          if (!fileSize) {
-            console.log("File size not known, downloading to check size:", downloadUrl)
-            const headResponse = await fetch(downloadUrl, { method: "HEAD" })
-            const contentLength = headResponse.headers.get("content-length")
-            if (contentLength) {
-              actualFileSize = parseInt(contentLength, 10)
-              console.log("File size determined from HEAD request:", actualFileSize, "bytes")
-            }
-          }
-
-          // Download file if size is acceptable
-          if (!actualFileSize || actualFileSize < MAX_ATTACHMENT_SIZE) {
-            console.log("Downloading PDF for attachment:", downloadUrl)
-            const response = await fetch(downloadUrl)
-            if (response.ok) {
-              const arrayBuffer = await response.arrayBuffer()
-              const buffer = Buffer.from(arrayBuffer)
-              const downloadedSize = buffer.length
-              
-              // Use actual downloaded size if we didn't know it before
-              if (!actualFileSize) {
-                actualFileSize = downloadedSize
-              }
-
-              // Only attach if still under limit
-              if (downloadedSize < MAX_ATTACHMENT_SIZE) {
-                const base64Content = buffer.toString("base64")
-                
-                // Sanitize filename - ensure it ends with .pdf
-                let filename = documentFiles.filename || `signed-${session.documents.title}.pdf`
-                if (!filename.toLowerCase().endsWith('.pdf')) {
-                  filename = filename + '.pdf'
-                }
-                // Remove any potentially problematic characters
-                filename = filename.replace(/[^a-zA-Z0-9._-]/g, '_')
-                
-                pdfAttachment = {
-                  filename: filename,
-                  content: base64Content,
-                }
-                console.log("PDF downloaded successfully for attachment, size:", downloadedSize, "bytes")
-              } else {
-                console.log("PDF file is too large for attachment (", downloadedSize, "bytes), will send download link only")
-                actualFileSize = downloadedSize
-              }
-            } else {
-              console.warn("Failed to download PDF for attachment, status:", response.status)
-            }
-          } else {
-            console.log("PDF file is too large for attachment (", actualFileSize, "bytes), will send download link only")
-          }
-        } catch (downloadError) {
-          console.error("Error downloading PDF for attachment:", downloadError)
-          // Continue without attachment - will send download link only
-        }
-      }
 
       // Collect all email recipients (recipients + sender)
       const emailRecipients: Array<{ email: string; name: string; id?: string }> = []
@@ -256,17 +190,31 @@ export async function POST(request: Request) {
         }
       }
 
-      // Send completion emails to all recipients (including sender)
+      // Generate download tokens and send completion emails to all recipients (including sender)
       if (emailRecipients.length > 0) {
         for (const recipient of emailRecipients) {
           try {
+            // Generate unique download token for this recipient
+            const downloadToken = generateDownloadToken()
+            const expiresAt = getTokenExpiryDate(90) // 90 days expiry for download links
+
+            // Create download token record
+            await supabase.from("download_tokens").insert({
+              document_id: session.document_id,
+              recipient_id: recipient.id || null,
+              email: recipient.email,
+              token: downloadToken,
+              expires_at: expiresAt.toISOString(),
+            })
+
+            // Generate unique download link
+            const downloadLink = `${baseUrl}/download/${downloadToken}`
+
             const emailTemplate = generateCompletionEmail({
               recipientName: recipient.name || recipient.email,
               recipientEmail: recipient.email,
               documentTitle: session.documents.title,
-              downloadUrl: downloadUrl,
-              attachment: pdfAttachment,
-              attachmentSize: actualFileSize,
+              downloadLink: downloadLink,
             })
 
             console.log("Sending completion email to:", recipient.email, "for document:", session.document_id)
@@ -276,7 +224,7 @@ export async function POST(request: Request) {
               console.error("Failed to send completion email to", recipient.email, ":", emailResult.error)
               // Don't throw - continue with other recipients even if one email fails
             } else {
-              console.log("Completion email sent successfully to:", recipient.email, pdfAttachment ? "with attachment" : "with download link only")
+              console.log("Completion email sent successfully to:", recipient.email, "with download link")
             }
 
             // Log email sent audit event (only for actual recipients, not sender)
@@ -287,7 +235,7 @@ export async function POST(request: Request) {
                 event_type: "recipient.completion_email_sent",
                 actor_email: recipient.email,
                 recipient_id: recipient.id,
-                metadata: { recipient_email: recipient.email, has_attachment: !!pdfAttachment },
+                metadata: { recipient_email: recipient.email },
               })
             } else {
               // Log for sender
@@ -296,7 +244,7 @@ export async function POST(request: Request) {
                 document_id: session.document_id,
                 event_type: "document.completion_email_sent",
                 actor_email: recipient.email,
-                metadata: { recipient_email: recipient.email, recipient_type: "sender", has_attachment: !!pdfAttachment },
+                metadata: { recipient_email: recipient.email, recipient_type: "sender" },
               })
             }
           } catch (emailError) {
