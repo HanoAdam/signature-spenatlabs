@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
 import { FileText, Clock, CheckCircle2, Send, XCircle } from "lucide-react"
+import { RecentDocuments } from "@/components/documents/recent-documents"
 
 export default async function DashboardPage() {
   const supabase = await createClient()
@@ -16,10 +16,19 @@ export default async function DashboardPage() {
 
   if (!userProfile) return null
 
-  // Fetch document stats
+  // Fetch document stats and recent documents with recipients and files
   const { data: documents } = await supabase
     .from("documents")
-    .select("id, status, created_at, title")
+    .select(
+      `
+      id, 
+      status, 
+      created_at, 
+      title,
+      recipients (id, name, email, role, status, signed_at),
+      document_files (id, file_type, url, filename)
+    `
+    )
     .eq("organization_id", userProfile.organization_id)
     .order("created_at", { ascending: false })
     .limit(10)
@@ -33,29 +42,6 @@ export default async function DashboardPage() {
   }
 
   const recentDocuments = documents?.slice(0, 5) || []
-
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case "draft":
-        return <Badge variant="secondary">Draft</Badge>
-      case "pending":
-        return (
-          <Badge variant="default" className="bg-warning text-warning-foreground">
-            Pending
-          </Badge>
-        )
-      case "completed":
-        return (
-          <Badge variant="default" className="bg-success text-success-foreground">
-            Completed
-          </Badge>
-        )
-      case "voided":
-        return <Badge variant="destructive">Voided</Badge>
-      default:
-        return <Badge variant="outline">{status}</Badge>
-    }
-  }
 
   return (
     <div className="p-6 space-y-6">
@@ -108,36 +94,7 @@ export default async function DashboardPage() {
       </div>
 
       <div className="grid gap-6 md:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Recent Documents</CardTitle>
-            <CardDescription>Your latest document activity</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {recentDocuments.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-8 text-center">
-                <FileText className="h-10 w-10 text-muted-foreground/50 mb-3" />
-                <p className="text-sm text-muted-foreground">No documents yet</p>
-                <p className="text-xs text-muted-foreground">Create your first document to get started</p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {recentDocuments.map((doc) => (
-                  <div key={doc.id} className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <FileText className="h-4 w-4 text-muted-foreground" />
-                      <div>
-                        <p className="text-sm font-medium leading-none">{doc.title}</p>
-                        <p className="text-xs text-muted-foreground">{new Date(doc.created_at).toLocaleDateString()}</p>
-                      </div>
-                    </div>
-                    {getStatusBadge(doc.status)}
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+        <RecentDocuments documents={recentDocuments} />
 
         <Card>
           <CardHeader>

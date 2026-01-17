@@ -197,7 +197,7 @@ describe('Completion Email Functionality', () => {
           recipientName: expect.any(String),
           recipientEmail: expect.any(String),
           documentTitle: 'Test Document',
-          downloadUrl: 'https://example.com/signed-document.pdf',
+          downloadLink: expect.stringContaining('https://signature.spenatlabs.com/download/'),
         })
       )
     })
