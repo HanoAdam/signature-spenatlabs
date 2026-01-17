@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { generateSigningToken, getTokenExpiryDate } from "@/lib/utils/tokens"
+import { generateSignatureRequestEmail, sendEmail } from "@/lib/utils/email"
 
 export async function POST(request: Request) {
   try {
@@ -160,6 +161,16 @@ export async function POST(request: Request) {
 
     // If sending now, create signing sessions and send emails
     if (sendNow && createdRecipients) {
+      // Get sender profile for email
+      const { data: senderProfile } = await supabase
+        .from("users")
+        .select("full_name, email")
+        .eq("id", user.id)
+        .single()
+
+      const senderName = senderProfile?.full_name || senderProfile?.email || user.email || "Someone"
+      const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "https://signature.spenatlabs.com"
+
       for (const recipient of createdRecipients) {
         if (recipient.role !== "cc") {
           const token = generateSigningToken()
@@ -169,7 +180,41 @@ export async function POST(request: Request) {
             token,
             expires_at: getTokenExpiryDate(7).toISOString(),
           })
-          if (sessionError) throw sessionError
+          if (sessionError) {
+            console.error("Signing session creation error:", sessionError)
+            throw sessionError
+          }
+
+          // Send email to recipient
+          const signingUrl = `${baseUrl}/sign/${token}`
+          const emailTemplate = generateSignatureRequestEmail({
+            recipientName: recipient.name,
+            recipientEmail: recipient.email,
+            documentTitle: title,
+            senderName,
+            signingUrl,
+          })
+
+          console.log("Sending email to:", recipient.email, "for document:", document.id)
+          const emailResult = await sendEmail(emailTemplate)
+          
+          if (!emailResult.success) {
+            console.error("Failed to send email to", recipient.email, ":", emailResult.error)
+            // Don't throw - continue with other recipients even if one email fails
+          } else {
+            console.log("Email sent successfully to:", recipient.email)
+          }
+
+          // Log email sent audit event
+          await supabase.from("audit_events").insert({
+            organization_id: organizationId,
+            document_id: document.id,
+            event_type: "recipient.email_sent",
+            actor_user_id: user.id,
+            actor_email: user.email,
+            recipient_id: recipient.id,
+            metadata: { recipient_email: recipient.email, email_success: emailResult.success },
+          })
         }
       }
 
