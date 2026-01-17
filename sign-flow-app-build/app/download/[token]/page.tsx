@@ -12,6 +12,19 @@ export default async function DownloadPage({ params }: PageProps) {
   const { token } = await params
   const supabase = await createClient()
 
+  if (!supabase) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-muted/30 p-6">
+        <Card className="max-w-md w-full">
+          <CardHeader className="text-center">
+            <CardTitle className="text-2xl">Configuration Error</CardTitle>
+            <CardDescription>Server configuration error. Please contact support.</CardDescription>
+          </CardHeader>
+        </Card>
+      </div>
+    )
+  }
+
   // Get download token and document info
   const { data: downloadToken, error: tokenError } = await supabase
     .from("download_tokens")
@@ -33,7 +46,27 @@ export default async function DownloadPage({ params }: PageProps) {
     .eq("token", token)
     .single()
 
-  if (tokenError || !downloadToken) {
+  if (tokenError) {
+    console.error("Download token error:", tokenError)
+    // Check if it's a table doesn't exist error
+    if (tokenError.message?.includes("relation") || tokenError.message?.includes("does not exist")) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-muted/30 p-6">
+          <Card className="max-w-md w-full">
+            <CardHeader className="text-center">
+              <CardTitle className="text-2xl">Database Error</CardTitle>
+              <CardDescription>
+                The download system is not properly configured. Please contact support.
+              </CardDescription>
+            </CardHeader>
+          </Card>
+        </div>
+      )
+    }
+    notFound()
+  }
+
+  if (!downloadToken) {
     notFound()
   }
 

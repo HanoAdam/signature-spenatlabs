@@ -6,6 +6,10 @@ export async function GET(request: Request, { params }: { params: Promise<{ toke
     const { token } = await params
     const supabase = await createClient()
 
+    if (!supabase) {
+      return NextResponse.json({ error: "Server configuration error" }, { status: 500 })
+    }
+
     // Get download token and document info
     const { data: downloadToken, error: tokenError } = await supabase
       .from("download_tokens")
